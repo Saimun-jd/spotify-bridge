@@ -31,7 +31,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? process.env.SPOTIFY_BRIDGE_PORT ?? 8765);
 const CLIENT_ID = process.env.SPOTIFY_CLIENT_ID ?? "";
 const CLIENT_SECRET = process.env.SPOTIFY_CLIENT_SECRET ?? "";
-const BASE_URL = process.env.RENDER_EXTERNAL_URL || `http://127.0.0.1:${PORT}`;
+const BASE_URL = process.env.RENDER_EXTERNAL_URL 
+  ? process.env.RENDER_EXTERNAL_URL 
+  : (process.env.RAILWAY_PUBLIC_DOMAIN 
+    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` 
+    : `http://127.0.0.1:${PORT}`);
 const REDIRECT_URI = `${BASE_URL}/callback`;
 const SCOPES = "user-read-currently-playing user-read-playback-state user-read-recently-played user-modify-playback-state";
 const TOKEN_FILE = path.join(__dirname, ".tokens.json");
@@ -257,7 +261,9 @@ async function refreshAccessToken() {
 
 async function getValidAccessToken() {
   if (!tokens) {
-    const loginUrl = BASE_URL.includes('render') ? `${BASE_URL}/login` : `http://127.0.0.1:${PORT}/login`;
+    const loginUrl = BASE_URL.includes('railway') || BASE_URL.includes('render') 
+      ? `${BASE_URL}/login` 
+      : `http://127.0.0.1:${PORT}/login`;
     throw new Error("Not authorised. Visit " + loginUrl);
   }
   if (Date.now() >= tokens.expires_at) await refreshAccessToken();
@@ -538,16 +544,28 @@ server.on("error", (err) => {
 });
 
 server.listen(PORT, "0.0.0.0", () => {
-  const isRender = BASE_URL.includes('render');
+  const isCloud = BASE_URL.includes('railway') || BASE_URL.includes('render');
   console.log(`[spotify-bridge] Listening on ${BASE_URL}`);
   
   if (!tokens) {
     console.log(`[spotify-bridge] Not authorised. Visit ${BASE_URL}/login to connect Spotify`);
-    if (!isRender) {
+    if (!isCloud) {
       openBrowser(`http://127.0.0.1:${PORT}/login`);
     }
   } else {
     console.log("[spotify-bridge] Tokens loaded from disk. Bridge is ready.");
+  }
+  
+  // Keep-alive ping for Render.com (prevents spin down)
+  if (BASE_URL.includes('render')) {
+    console.log('[keep-alive] Starting keep-alive pings every 10 minutes');
+    setInterval(() => {
+      https.get(`${BASE_URL}/status`, (res) => {
+        console.log(`[keep-alive] Pinged /status - Status: ${res.statusCode}`);
+      }).on('error', (err) => {
+        console.log('[keep-alive] Ping failed:', err.message);
+      });
+    }, 10 * 60 * 1000); // Every 10 minutes (increased frequency)
   }
 });
 
